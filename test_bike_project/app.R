@@ -7,11 +7,14 @@ library(shinydashboard)
 library(shinyWidgets)
 library(RColorBrewer)
 library(rsconnect)
+library(dplyr)
 
-demand = read.csv("WEEKDAY_demand.csv")
+source("real_time_data.R")
 unique_stations = read.csv("location_info.csv")
+load("model_output.rdata")
+load("kmeans_models.rdata")
 
-time.options = sapply(c(names(demand)[2:(length(names(demand))-1)]), substring, 2, simplify = TRUE, USE.NAMES = FALSE)
+time.options = sapply(c(names(WEEKDAY_demand)[2:(length(names(WEEKDAY_demand))-1)]), substring, 2, simplify = TRUE, USE.NAMES = FALSE)
 time.options = c("Current Time", sapply(time.options, function(y) gsub("\\.", ":",y), simplify = TRUE, USE.NAMES = FALSE))
 
 ui <- shinyUI(dashboardPage(
@@ -57,9 +60,11 @@ ui <- shinyUI(dashboardPage(
       tabBox(
         width = 12,
         height = 600,
-        tabPanel("Availability Map"
+        tabPanel("Availability Map",
+                 leafletOutput("map", height=500) %>% withSpinner(color="red")
         ),
-        tabPanel("All Time Availabilities"
+        tabPanel("All Time Availabilities",
+                 imageOutput("clusterplot", height=500) %>% withSpinner(color="red")
         )
       )
     )
@@ -67,8 +72,62 @@ ui <- shinyUI(dashboardPage(
 )
 )
 
-server <- function(input, output, session){}
+server <- function(input, output, session){
+  #before loading - display map of all clusters and average of current availabilities
+  dayofweek = weekdays(Sys.time())
+  unique_stations = merge(merge_df, unique_stations[,c("station_id", "name")])
+  unique_stations["cluster"] = 0
+  cluster.df = data.frame("cluster" = 1:5, "cluster_color" = brewer.pal(5, "Dark2"))
+  if(dayofweek == "Saturday"){
+    is_SAT = 1
+    is_SUN = 0
+    unique_stations = unique_stations %>% 
+      mutate(cluster = km.obj.sat$cluster[[as.character(station_id)]])
+    merged = merge(unique_stations, cluster.df)
+  } else if (dayofweek == "Sunday"){
+    is_SAT = 0
+    is_SUN = 1
+    unique_stations["cluster"] = km.obj.sun$cluster[[unique_stations$station_id]]
+    merged = merge(unique_stations, cluster.df)
+  } else{
+    is_SAT = 0
+    is_SUN = 0
+    unique_stations["cluster"] = km.obj.weekdays$cluster[[unique_stations$station_id]]
+    merged = merge(unique_stations, cluster.df)
+  }
+  
+  output$map <- renderLeaflet({
+    leaflet(data = merge_df) %>%
+      addTiles() %>%  # Add default OpenStreetMap map tiles
+      addCircleMarkers(lng = ~avg_start_lng , 
+                       lat=~avg_start_lat, 
+                       popup=~start_station_name, 
+                       radius = 1,
+                       color = ~color
+      )
+  })
+  
+  output$clusterplot <- renderImage({
+    if(is_SAT == 0 & is_SUN == 0){
+      return(list(
+        src = "www/Weekday_kmeans_plot.png",
+        contentType = "image/png"
+      ))
+    }
+    if(is_SAT == 1){
+      return(list(
+        src = "www/Saturday_kmeans_plot.png",
+        contentType = "image/png"
+      ))
+    }
+    if(is_SUN == 1){
+      return(list(
+        src = "www/Sunday_kmeans_plot.png",
+        contentType = "image/png"
+      ))
+    }
+  })
+  
+}
 
 shinyApp(ui, server)
-
-deployApp()
