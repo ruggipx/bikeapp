@@ -51,7 +51,8 @@ ui <- shinyUI(dashboardPage(
              actionButton("load", "GO", style='color: #FF5349; font-size:150%')),
       #Output for percent availability - increase font and center, change color by % availability
       column(4, 
-             box(width="200", height="200")
+             box(textOutput("avgnum_bikes"),
+                 width="200", height="200")
       ),
       
       hr(),
@@ -76,36 +77,42 @@ server <- function(input, output, session){
   #before loading - display map of all clusters and average of current availabilities
   dayofweek = weekdays(Sys.time())
   unique_stations = merge(merge_df, unique_stations[,c("station_id", "name")])
-  unique_stations["cluster"] = 0
   cluster.df = data.frame("cluster" = 1:5, "cluster_color" = brewer.pal(5, "Dark2"))
   if(dayofweek == "Saturday"){
     is_SAT = 1
     is_SUN = 0
-    unique_stations = unique_stations %>% 
-      mutate(cluster = km.obj.sat$cluster[[as.character(station_id)]])
-    merged = merge(unique_stations, cluster.df)
+    km.clusters = data.frame("station_id" = 1:length(km.obj.sat$cluster), "cluster" =  data.frame(km.obj.sat$cluster)$km.obj.sat.cluster)
+    merged = merge(unique_stations, km.clusters)
+    merged = merge(merged, cluster.df)
   } else if (dayofweek == "Sunday"){
     is_SAT = 0
     is_SUN = 1
-    unique_stations["cluster"] = km.obj.sun$cluster[[unique_stations$station_id]]
-    merged = merge(unique_stations, cluster.df)
+    km.clusters = data.frame("station_id" = 1:length(km.obj.sun$cluster), "cluster" =  data.frame(km.obj.sun$cluster)$km.obj.sun.cluster)
+    merged = merge(unique_stations, km.clusters)
+    merged = merge(merged, cluster.df)
   } else{
     is_SAT = 0
     is_SUN = 0
-    unique_stations["cluster"] = km.obj.weekdays$cluster[[unique_stations$station_id]]
-    merged = merge(unique_stations, cluster.df)
+    km.clusters = data.frame("station_id" = 1:length(km.obj.weekdays$cluster), "cluster" =  data.frame(km.obj.weekdays$cluster)$km.obj.weekdays.cluster)
+    merged = merge(unique_stations, km.clusters)
+    merged = merge(merged, cluster.df)
   }
   
   output$map <- renderLeaflet({
-    leaflet(data = merge_df) %>%
+    leaflet(data = merged) %>%
       addTiles() %>%  # Add default OpenStreetMap map tiles
-      addCircleMarkers(lng = ~avg_start_lng , 
-                       lat=~avg_start_lat, 
-                       popup=~start_station_name, 
-                       radius = 1,
-                       color = ~color
+      addCircleMarkers(lng = ~lon , 
+                       lat=~lat, 
+                       popup=paste0(merged$name, ": ", as.character(merged$num_bikes_available), " bikes available"), 
+                       radius = 4,
+                       opacity = .7,
+                       color = ~cluster_color
       )
   })
+  
+  output$avgnum_bikes = renderText({
+    paste0("There are about ",as.character(trunc(mean(merged$num_bikes_available))), " bikes available at each station.")
+  }) 
   
   output$clusterplot <- renderImage({
     if(is_SAT == 0 & is_SUN == 0){
