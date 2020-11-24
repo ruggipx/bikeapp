@@ -1,0 +1,283 @@
+#### 6. FUNCTIONS Match the data into the time line data frame
+
+
+library(tidyverse)
+library(purrr)
+library(reshape2)
+library(lubridate)
+hours <- as.character(0:23)
+hours <- ifelse(as.numeric(hours)<10,paste0("0",hours),hours)
+mins <- as.character(seq(0,55,5))
+mins <- ifelse(as.numeric(mins)<10,paste0("0",mins),mins)
+# generate time line for the column name
+tm <- expand_grid(hours,mins)%>%
+  apply(MARGIN=1,FUN = function(x){paste0(x['hours'],":",x['mins'])})
+
+into_timeline <- function(sub1){
+  sub <-  data.frame(matrix(nrow = 1, ncol = 288)) # empty place marked NA
+  colnames(sub) <- tm
+  sub[,sub1$time] <- sub1$avg_num
+  return(sub)
+}
+
+
+
+### 8. Transform real time availability data into matrix
+
+#The raw data was collected by a 5-min range, we instead select the 10-min range data for prediction.
+
+
+read_in <- function(path){
+  dat <- read.csv(path,header = F)%>%
+    select(-1)
+  colnames(dat) <- dat[1,]
+  dat <- dat[-1,]
+  dat[,-ncol(dat)] <- sapply(dat[,-ncol(dat)],as.numeric)
+  return(dat)
+}
+WEEKDAY_demand <- read_in("WEEKDAY_demand.csv")
+WEEKDAY_arrive <- read_in("WEEKDAY_arrive.csv")
+SUN_demand <- read_in("SUN_demand.csv")
+SUN_arrive <- read_in("SUN_arrive.csv")
+SAT_demand <- read_in("SAT_demand.csv")
+SAT_arrive <- read_in("SAT_arrive.csv")
+
+
+
+
+
+oct <- read.csv("202010-capitalbikeshare-tripdata.csv")
+real_time <- read.csv("full_real_time_data.csv",header = T)%>%rename(station_id = id)
+
+
+get_aval <- function(data){
+  step1 <- data%>%
+    group_by(station_id,time) %>%
+    summarise(avg_num = mean(num_bikes_available)) 
+  # average availability 
+  
+  step2 <- step1%>%
+    split(step1['station_id'])
+  
+  step3 <- step2%>% 
+    map(~into_timeline(.x))  # apply into_timeline to each station, return a list 
+  step4 <- Reduce(rbind,step3) # combine each station in the list by row
+  step4['station_id'] <- names(step2)  # station ID
+  return(step4)
+}
+
+WEEK_aval <- real_time%>%
+  filter(!day %in% c("Sat","Sun"))%>%
+  get_aval()# turn into time-line matrix
+
+
+SAT_aval <- real_time%>%
+  filter(day %in% c("Sat"))%>%
+  get_aval() # turn into time-line matrix
+
+
+SUN_aval <- real_time%>%
+  filter(day %in% c("Sun"))%>%
+  get_aval() # turn into time-line matrix
+
+
+
+real_time <- read.csv("model_input_full_notRounded.csv",header=T)
+get_aval <- function(data){
+  step1 <- data%>%
+    rename(avg_num = available)%>%
+    mutate(hour = ifelse(hour<10,paste0("0",as.character(hour)),as.character(hour)),minute=ifelse(minute<10,paste0("0",as.character(minute)),as.character(minute)))%>%
+    mutate(time=paste0(hour,":",minute))%>%
+    select(station_id,avg_num,time)
+  
+  step2 <- step1%>%
+    split(step1['station_id'])
+  
+  step3 <- step2%>% 
+    map(~into_timeline(.x))  # apply into_timeline to each station, return a list 
+  step4 <- Reduce(rbind,step3) # combine each station in the list by row
+  step4['station_id'] <- names(step2)  # station ID
+  return(step4)
+}
+WEEK_aval <- real_time%>%
+  filter(is_Sat==F,is_Sun==F)%>%
+  get_aval()# turn into time-line matrix
+
+
+SAT_aval <- real_time%>%
+  filter(is_Sat==T)%>%
+  get_aval() # turn into time-line matrix
+
+
+SUN_aval <- real_time%>%
+  filter(is_Sun==T)%>%
+  get_aval() # turn into time-line matrix
+
+
+
+### aggregate the demand/arrive data by a 10-min range
+
+library(reshape2)
+
+# aggregator 
+sum_n_col <-function(df,n){
+  col_names <- colnames(df)[seq(1,ncol(df),by=n)]
+  res = sapply(seq(1,ncol(df),by=n),function(i) rowSums(df[,i:(i+n-1)]))
+  colnames(res) <- col_names
+  return(res)
+}
+
+# transform data 
+get_input<- function(a,b,d,min_range){
+  # a:arrive, b:aval, d:demand
+  
+  b <- b%>%
+    select(seq(1,288,min_range),289) # select min_range
+  
+  # put all input matrices into a list  
+  mylist = list(a = a$station_id, b = b$station_id, d = d$station_id)  
+  
+  # find the common stations between three matrices
+  
+  common_values = Reduce(intersect, mylist)
+  common_idx <- lapply(mylist, function(x) which(x %in% common_values))
+  
+  # station id of the common stations
+  station_id <- a$station_id[common_idx$a]
+  
+  # aggregate by min_range
+  a <- sum_n_col(a[,-ncol(a)],min_range)
+  d <- sum_n_col(d[,-ncol(d)],min_range)
+  
+  # turn NAs in demand into 1 
+  #(when the user is looking at the station 
+  #it means demand is at least 1)
+  
+  # turn NAs in arrive into 0
+  #(no records means no bikes arrived)
+  
+  d[is.na(d)] <- 1
+  a[is.na(a)] <- 0
+  
+  # prob = (availability+arrive) / demand
+  day_prob <- (b[common_idx$b,-ncol(b)]+a[common_idx$a,])/d[common_idx$d,]
+  
+  save1 <- day_prob
+  
+  # truncate prob>1 to 1
+  day_prob[day_prob>1] <- 1
+  
+  # add back station_id
+  rownames(day_prob) <- as.character(station_id)
+  day_prob$station_id <- as.factor(station_id)
+  
+  # add lattitude and longtitude
+  location <- oct%>%
+    select(start_station_id,start_lat,start_lng)%>%
+    group_by(start_station_id)%>%
+    summarise(start_lat=mean(start_lat),start_lng=mean(start_lng))
+  
+  loc_index <- match(day_prob$station_id,location$start_station_id)
+  
+  day_prob <- cbind(day_prob,location[loc_index,])
+  
+  # melted the matrix into data frame
+  melted <- melt(day_prob,(288/min_range+1):(ncol(day_prob)),variable.name="time",value.name = "available")%>%
+    mutate(hour=hour(hm(time)),min = minute(hm(time)))%>%
+    select(-time,-start_station_id)%>%
+    rename(lng=start_lng,lat = start_lat)%>%
+    mutate(station_id = as.numeric(station_id))
+  return(list(matrix=save1,melted=melted))
+}
+
+#min_range = 2: by 10 mins, min_range = 6: by 30 mins, min_range=12, by 60mins
+sat_list <- get_input(SAT_arrive,SAT_aval,SAT_demand,2)
+
+sat <-sat_list$melted%>%
+  mutate(is_SAT=T,is_SUN=F)
+
+week_list <- get_input(WEEKDAY_arrive,WEEK_aval,WEEKDAY_demand,2)
+
+week <- week_list$melted%>%
+  mutate(is_SAT=F,is_SUN=F)
+
+sun_list <- get_input(SUN_arrive,SUN_aval,SUN_demand,2)
+
+sun <- sun_list$melted%>%
+  mutate(is_SAT=F,is_SUN=T)
+
+write.csv(week_list$matrix,"kmeans_weekday_input_matrix.csv")
+write.csv(sat_list$matrix,"kmeans_sat_input_matrix.csv")
+write.csv(sun_list$matrix,"kmeans_sun_input_matrix.csv")
+kmeans_input  <-week_list$matrix
+
+head(kmeans_input[,1:5])
+
+
+
+
+library(xgboost)
+library(Matrix)
+library(RcppRoll)
+library(zoo)
+
+
+
+
+
+input_data <- as.matrix(rbind(week,sat,sun))
+head(input_data)
+
+#write.csv(input_data,"input_data.csv")
+
+trainDMatrix <- xgb.DMatrix(data =as.matrix(input_data[,c(-1,-4)]), label = input_data[,4])
+
+params <- list(booster = "gbtree"
+               , objective ="binary:logistic" #"reg:linear" # "binary:logistic"
+               , eta=0.4
+               , gamma=0
+)
+xgb.tab <- xgb.cv(data = trainDMatrix
+                  , param = params
+                  , verbose = F
+                  , maximize = FALSE
+                  , evaluation = "rmse"
+                  , nrounds = 100
+                  , nthreads = 10, nfold = 2, early_stopping_round = 10) 
+# nfold =2 or 5 yields very close error
+
+num_iterations = xgb.tab$best_iteration
+
+model <- xgb.train(data = trainDMatrix
+                   , param = params
+                   , maximize = FALSE, evaluation = 'rmse', nrounds = num_iterations)
+
+predict <- predict(model, trainDMatrix)
+observed=input_data[,4]
+
+importance <- xgb.importance(feature_names = colnames(trainDMatrix),model=model)
+
+paste0("RMSE:",round(sqrt(sum((observed-predict)^2)/nrow(input_data)),5))
+
+name_indx <- which(oct$start_station_id %in% intersect(oct$start_station_id,input_data[,1]))
+
+station_name <- oct[name_indx,5:6]%>%
+  rename(station_id=start_station_id,station_name=start_station_name)%>%
+  unique()%>%
+  arrange(station_id)
+
+
+
+
+predict_output <- data.frame(station_id = input_data[,1],predict_prob = predict,lng = input_data[,2],lat = input_data[,3],hour =input_data[,5],minute = input_data[,6])%>%
+  mutate(hour = ifelse(hour<10,paste0("0",as.character(hour)),as.character(hour)),minute=ifelse(minute<10,paste0("0",as.character(minute)),as.character(minute)))%>%
+  mutate(time=paste0(hour,":",minute))%>%
+  select(-hour,-minute)
+
+predict_output <-merge(station_name,predict_output,by.x = "station_id")
+
+#importance
+
+saveRDS(final_model, "./final_model.rds")
+
+

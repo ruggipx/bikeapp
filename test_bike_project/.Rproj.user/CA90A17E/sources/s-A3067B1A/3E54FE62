@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1606254634776.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "1108532697",
+    "id" : "3E54FE62",
+    "lastKnownWriteTime" : 1606256084,
+    "last_content_update" : 1606256084816,
+    "path" : "~/STAT 601/bikeapp/app.R",
+    "project_path" : null,
+    "properties" : {
+        "cursorPosition" : "70,2",
+        "scrollLine" : "47"
+    },
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

@@ -1,0 +1,11 @@
+stations = read.csv("202010-capitalbikeshare-tripdata.csv")
+
+#make sure start and end stations are the same
+unique_stations_s = sort(unique(stations$start_station_name))[2:length(sort(unique(stations$start_station_name)))]
+unique_stations = sort(unique(stations$end_station_name))[2:length(sort(unique(stations$end_station_name)))]
+
+
+#create small csv of unique stations
+write.csv(data.frame("name"=unique_stations),"unique_stations.csv")
+
+

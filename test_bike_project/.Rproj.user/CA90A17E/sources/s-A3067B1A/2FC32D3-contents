@@ -1,0 +1,54 @@
+library(dplyr)
+library(shiny)
+library(shinyTime)
+library(leaflet) 
+library(shinycssloaders)
+library(shinydashboard)
+a = read.csv("a.csv")
+a$color = "magenta"
+
+ui <- fluidPage(
+  
+  titlePanel(
+    h1("Bike Availability in Washington D.C.", align="center")
+  ),
+  
+  fluidRow(
+    
+    column(3, offset=1,
+           dateRangeInput("day", "Date of Bike Selection",  start = "2020-11-01", end = "2021-12-31")),
+    column(3, offset=1,
+           timeInput("time1", "Start Time:")),
+    column(3, 
+           timeInput("time2", "End Time:")
+    )
+  ),
+  
+  hr(),
+  
+  leafletOutput("map", height=600) %>% withSpinner(color="magenta")
+  
+  
+)
+
+server <- function(input, output, session) {
+  
+  # Reactive expression for the data subsetted to what the user selected
+  filteredData <- reactive({
+    #a
+  })
+  
+  
+  output$map <- renderLeaflet({
+    leaflet(data = a) %>%
+      addTiles() %>%  # Add default OpenStreetMap map tiles
+      addCircleMarkers(lng = ~avg_start_lng , 
+                       lat=~avg_start_lat, 
+                       popup=~start_station_name, 
+                       radius = 5,
+                       color = ~color
+      )
+  })
+}
+
+shinyApp(ui, server)

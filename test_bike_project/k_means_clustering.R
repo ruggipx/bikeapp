@@ -1,0 +1,188 @@
+library(stringr)
+library(tidyverse)
+library(lubridate)
+library(leaflet)
+library(factoextra)
+library(tidyquant)
+library(gbfs)
+library(RColorBrewer)
+#display.brewer.all(colorblindFriendly = TRUE)
+
+
+
+#Load in the availability data
+
+df = read.csv("full_real_time_data.csv", header = T)
+head(df)
+
+'Preprocess data for K-means clustering and Modeling
+. Notes Now that we have a dataframe that has the input datafram which has 537 station ids in the rows
+and time in the columns. The dataframe represent the average bike available for each time period for
+each station.'
+
+num_time_period = (60/5)*24
+# check if all stations reported during the data collection time period
+invalid_id = (df %>%
+                group_by(id) %>%
+                summarise(n = length(unique(time))) %>%
+                filter(n<num_time_period))$id
+# There are bikes with no availability all the time
+no_bike_id = (df %>%
+                filter(!id %in% invalid_id) %>%
+                group_by(id) %>%
+                summarise(max_num = max(num_bikes_available)) %>%
+                filter(max_num<=0))$id
+
+#Aggregate the demand
+
+demand_summary = rounded.oct %>%
+  filter(!day %in% c("Sat","Sun"), start_station_id != "" )
+demand_summary = demand_summary %>%
+  group_by(start_station_id,time,date) %>%
+  count() %>%
+  group_by(start_station_id,time) %>%
+  summarise(avg_demand = mean(n)) %>%
+  arrange(start_station_id, time)
+days.of.week <- c("Mon","Tue","Wed","Thu","Fri", "Sat", "Sun")
+gen_avail_matrix <- function(avail_df, wdays, common_id){
+  avail = avail_df %>%
+    filter(day %in% wdays, id %in% common_id) %>%
+    group_by(id,time) %>%
+    summarise(avg = mean(num_bikes_available)) %>%
+    arrange(id,time)
+  df_split.avail = split(avail, avail$time)
+  time_periods = unique(avail$time)
+  mat.avail = matrix(nrow =length(common_id), ncol = num_time_period)
+  rownames(mat.avail) = common_id
+  colnames(mat.avail) = time_periods
+  # because we don't have NA in availability
+  for(i in 1:ncol(mat.avail)){
+    mat.avail[,i] = df_split.avail[[i]]$avg
+  }
+  return(mat.avail)
+}
+sum_n_col <-function(df,n){
+  col_names <- colnames(df)[seq(1,ncol(df),by=n)]
+  res = sapply(seq(1,ncol(df),by=n),function(i) rowSums(df[,i:(i+n-1)]))
+  colnames(res) <- col_names
+  return(res)
+}
+#probability of getting a bike in n*5 min range, n must be a integer divisor of 288
+prob_n_5min <- function(avail_df, arrive_df, demand_df, n){
+  n.time = colnames(avail_df)[(seq(1,ncol(avail_df), by = n))]
+  bike.every.n = avail_df[,n.time] + sum_n_col(arrive_df, n)
+  demand_df[demand_df==0] <-1
+  demand.every.n = sum_n_col(demand_df,n)
+  return(bike.every.n/demand.every.n)
+}
+
+#Load in Demand and Arrive
+
+load_in_matrix <- function(raw_df, common_id){
+  raw_df[is.na(raw_df)]<-0
+  raw_df <- raw_df %>%
+    filter(station_id %in% common_id) %>%
+    select(-c(X1, station_id)) %>%
+    as.matrix()
+  rownames(raw_df) <-common_id
+  return(raw_df)
+}
+#day: a vector
+bike_share_mat <- function(avail_df, arrive_csv_path, demand_csv_path, day, by_n){
+  arrive_df = read_csv(arrive_csv_path)
+  demand_df = read_csv(demand_csv_path)
+  #get common_id first:
+  common_id = intersect(unique(avail_df$id), unique(arrive_df$station_id))
+  common_id = intersect(common_id, unique(demand_df$station_id))
+  avail_df = gen_avail_matrix(avail_df, day, common_id)
+  #print(avail_df[1:5,1:10])
+  arrive_df = load_in_matrix(arrive_df, common_id)
+  #print(arrive_df[1:5,1:10])
+  demand_df = load_in_matrix(demand_df, common_id)
+  #print(demand_df[1:5,1:10])
+  return(prob_n_5min(avail_df, arrive_df,demand_df, by_n))
+}
+#input.weekday = bike_share_mat(df, "WEEKDAY_arrive.csv","WEEKDAY_demand.csv", days.of.week[1:5], 2)
+#input.sat = bike_share_mat(df, "SAT_arrive.csv","SAT_demand.csv", "Sat", 2)
+#input.sun = bike_share_mat(df, "SUN_arrive.csv","SUN_demand.csv", "Sun", 2)
+
+#K-means Clustering(Weekdays, Sat, Sun)
+
+set.seed(601)
+gen_prob_mat <- function(mat){
+  mat[mat>1] <-1
+  mat = round(mat,2)
+  return(mat)
+}
+tune_kmeans <-function(mat){
+  mat = gen_prob_mat(mat)
+  # tuning
+  tuning.res = fviz_nbclust(mat, kmeans,method = "wss")
+  return(tuning.res)
+}
+gen_k_means_center <- function(km.obj, k){
+  centers = round(as.data.frame(t(km.obj$centers))*100)
+  3
+  colnames(centers) = paste0("cluster",1:k)
+  centers$time = rownames(centers)
+  return(centers)
+}
+gen_km_plot <- function(centers, by_n){
+  df = data.frame(time = character(), prob = double(), cluster = character())
+  k = ncol(centers)-1
+  cluster_names = colnames(centers)
+  for (i in 1:k){
+    temp = data.frame(time = 1:(288/by_n), prob = centers[,i], cluster = cluster_names[i])
+    df = rbind(df, temp)
+  }
+  ggplot(df, aes(x = time,y = prob, color = cluster, group = cluster)) +
+    geom_line() +
+    geom_point(size = 1)+
+    scale_x_continuous(breaks = seq(1,(288/by_n), 12/by_n), labels = c(0:23)) +
+    labs(x = "Hour",
+         y = "Probability",
+         title = "Probability of Getting a Bike per Hour by Station Group") +
+    scale_color_manual(name="Station Group", labels = c("1", "2", "3", "4", "5"), values = brewer.pal(5, "Dark2")) +
+    theme(text = element_text(size = 20),
+          plot.title = element_text(hjust = 0.5), 
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+          panel.background = element_blank(), axis.line = element_line(colour = "black"))
+}
+# Weekdays
+input.weekday.hour= bike_share_mat(df, "WEEKDAY_arrive.csv",
+                                   "WEEKDAY_demand.csv", days.of.week[1:5], 12)
+tuning.res = tune_kmeans(input.weekday.hour)
+tuning.res + geom_vline(xintercept = 5, color = "red")
+
+#Number of clusters k
+
+km.obj = kmeans(gen_prob_mat(input.weekday.hour), 5, nstart = 25)
+table(km.obj$cluster)
+
+gen_km_plot(gen_k_means_center(km.obj, 5),12)
+
+# Sat
+input.sat.hour = bike_share_mat(df, "SAT_arrive.csv",
+                                "SAT_demand.csv", days.of.week[6], 12)
+tuning.res = tune_kmeans(input.sat.hour)
+tuning.res + geom_vline(xintercept = 5, color = "red")
+
+#Number of clusters k
+
+km.obj = kmeans(gen_prob_mat(input.sat.hour), 5, nstart = 25)
+table(km.obj$cluster)
+
+gen_km_plot(gen_k_means_center(km.obj, 5),12)
+
+
+#Probability of Getting a Bike per Hour
+# Sun
+input.sun.hour = bike_share_mat(df, "SUN_arrive.csv",
+                                "SUN_demand.csv", days.of.week[7], 12)
+tuning.res = tune_kmeans(input.sun.hour)
+tuning.res + geom_vline(xintercept = 5, color = "red")
+
+km.obj = kmeans(gen_prob_mat(input.sun.hour), 5, nstart = 25)
+table(km.obj$cluster)
+
+gen_km_plot(gen_k_means_center(km.obj, 5),12)
