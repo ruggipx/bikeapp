@@ -74,7 +74,7 @@ ui <- shinyUI(dashboardPage(
       #Input for real time or future data
       #Load button-used to trigger response
       column(3, 
-             selectInput("time", "Time(24 Hours):", time.options, selected = "Current Time", multiple=FALSE),
+             textInput("time", "Time(24 Hours in format 'XX:XX'):", value = "Current Time"),
              actionButton("load", "GO", style='color: #FF5349; font-size:150%')),
       #Output for percent availability - increase font and center, change color by % availability
       column(4, 
