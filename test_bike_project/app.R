@@ -12,13 +12,14 @@ library(plotly)
 library(xgboost)
 library(lubridate)
 library(shinyalert)
+library(gbfs)
 
 source("real_time_data.R")
 source("k_means_clustering.R")
 unique_stations = read.csv("location_info.csv")
 unique_stations_2 = unique_stations[,names(unique_stations) != "X"]
-load("model_output.rdata")
-load("kmeans_models.rdata")
+load("model_output.RData")
+load("kmeans_models.RData")
 source("nearby.R")
 
 gen_km_plot <- function(centers, by_n){
@@ -62,6 +63,7 @@ ui <- shinyUI(dashboardPage(
     fluidRow(
       
       #location
+      useShinyalert(),
       column(3, 
              selectInput("location", "Select the Station Closest to You:", sort(unique_stations$name), selected = sort(unique_stations$name)[1], multiple=FALSE)
       ), 
@@ -172,10 +174,11 @@ server <- function(input, output, session){
       dayofweek="Weekday"
     }
     
-    observeEvent(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5))&(input$time != "Current Time"))) {
-      if(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5)))&(input$time != "Current Time")){
-        error=shinyalert("Oops!", "Please input a valid time.", type = "error")
+    observeEvent(input$load & (input$time != "Current Time")&(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5)))), {
+      if(input$load & (input$time != "Current Time")&(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5))))){
+        error=shinyalert("Oops!", "Please reload page and provide a valid time.", type = "error")
       }
+        
     })
     
     if(input$time != "Current Time"){
@@ -257,6 +260,12 @@ server <- function(input, output, session){
         })"
     } else {
       #predict probability
+      observeEvent(input$load & !(station_info[station_info$name == input$location, "station_id"] %in% input_data[,1]), {
+        if(input$load & !(station_info[station_info$name == input$location, "station_id"] %in% input_data[,1])){
+          error=shinyalert("Oops!", "This station is not supported by our model. Please reload page and select another station.", type = "error")
+        }
+      })
+      
       selected.station = unique_stations_2[unique_stations_2$name == input$location,]
       stations.max.top5 = find_nearest_5(as.numeric(unique_stations[unique_stations$name == input$location, "station_id"]), distance.mat)
       stations.max.top6 = rbind(selected.station, stations.max.top5)
@@ -294,6 +303,8 @@ server <- function(input, output, session){
         })
       }
       
+      merged = merged[merged$station_id %in% input_data[,1],]
+      
       predicted = predict(model, as.matrix(data.frame("lat"=merged$lat, "lng"=merged$lon, "hour"=rep(hours, length(merged$cluster)),  "min"=rep(minutes, length(merged$cluster)), "is_SAT"=rep(is_SAT, length(merged$cluster)), "is_SUN"=rep(is_SUN, length(merged$cluster)))))
       merged = cbind(merged, predicted)
       
@@ -313,13 +324,13 @@ server <- function(input, output, session){
       })
       
       output$avgnum_bikes = renderText({
-        if(length(merged$cluster)>1){
-          paste0("There is a ", as.character(trunc(merged[merged$station_id == selected.station$station_id,]$predicted*100)), "% chance of finding an available bike at ", selected.station$name, " station")
-        } else{
-          paste0("There is a ", as.character(trunc(merged[merged$station_id == selected.station$station_id,]$predicted*100)), "% chance of finding an available bike at ", selected.station$name, " station. There are no other bike stations nearby.")
-          
-        }
-      })
+          if(length(merged$cluster)>1){
+            paste0("There is a ", as.character(trunc(merged[merged$station_id == selected.station$station_id,]$predicted*100)), "% chance of finding an available bike at ", selected.station$name, " station")
+          } else{
+            paste0("There is a ", as.character(trunc(merged[merged$station_id == selected.station$station_id,]$predicted*100)), "% chance of finding an available bike at ", selected.station$name, " station. There are no other bike stations nearby.")
+          }
+        })
+      
       
       "output$Color = renderText({
         if(trunc(merged[merged$station_id == selected.station$station_id,]$predicted*100)>80){

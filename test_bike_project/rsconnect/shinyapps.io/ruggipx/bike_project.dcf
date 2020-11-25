@@ -1,0 +1,13 @@
+name: bike_project
+title: bike_project
+username:
+account: ruggipx
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 3298320
+bundleId: 3902861
+url: https://ruggipx.shinyapps.io/bike_project/
+when: 1606280203.07556
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: 202010-capitalbikeshare-tripdata.csv|a.csv|bike-sharing.R|full_real_time_data.csv|kmeans_sat_input_matrix.csv|kmeans_sun_input_matrix.csv|kmeans_weekday_input_matrix.csv|model_input_full_notRounded.csv|og_app.R|out_put.csv|SAT_arrive.csv|SAT_demand.csv|SUN_arrive.csv|SUN_demand.csv|Weekday.csv|WEEKDAY_arrive.csv|WEEKDAY_demand.csv
