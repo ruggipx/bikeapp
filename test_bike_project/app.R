@@ -44,6 +44,19 @@ gen_km_plot <- function(centers, by_n){
           panel.background = element_blank(), axis.line = element_line(colour = "black"))
 }
 
+tryObserve <- function(x) {
+  x <- substitute(x)
+  env <- parent.frame()
+  observe({
+    tryCatch(
+      eval(x, env),
+      error = function(e) {
+        showNotification(paste("Error: ", e$message), type = "error")
+      }
+    )
+  })
+}
+
 time.options = c("Current Time", names(WEEKDAY_demand)[1:(length(names(WEEKDAY_demand))-1)])
 
 ui <- shinyUI(dashboardPage(
@@ -63,7 +76,7 @@ ui <- shinyUI(dashboardPage(
     fluidRow(
       
       #location
-      useShinyalert(),
+      #useShinyalert(),
       column(3, 
              selectInput("location", "Select the Station Closest to You:", sort(unique_stations$name), selected = sort(unique_stations$name)[1], multiple=FALSE)
       ), 
@@ -74,7 +87,7 @@ ui <- shinyUI(dashboardPage(
                           choices=c("Weekday", "Saturday", "Sunday"))
       ),
       
-      useShinyalert(),
+      #useShinyalert(),
       #Input for real time or future data
       #Load button-used to trigger response
       column(3, 
@@ -174,12 +187,14 @@ server <- function(input, output, session){
       dayofweek="Weekday"
     }
     
-    observeEvent(input$load & (input$time != "Current Time")&(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5)))), {
-      if(input$load & (input$time != "Current Time")&(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5))))){
-        error=shinyalert("Oops!", "Please reload page and provide a valid time.", type = "error")
-      }
-        
-    })
+    #observeEvent(input$load & (input$time != "Current Time")&(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5)))), {
+    #  if(input$load & (input$time != "Current Time")&(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5))))){
+    #    error=shinyalert("Oops!", "Please reload page and provide a valid time.", type = "error")
+    #  }
+    #    
+    #})
+    
+    tryObserve(input$load & (input$time != "Current Time")&(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5)))))
     
     if(input$time != "Current Time"){
       hours = as.numeric(substr(input$time, 1, 2))
@@ -190,6 +205,14 @@ server <- function(input, output, session){
     } else{
       time.diff=0
     }
+    
+    if(is.na(hours)|is.na(minutes)){
+      output$avgnum_bikes = renderText({
+        "Please provide a valid time."
+      })
+      return("Please reload page and provide a valid time.")
+    }
+    
     ##CURRENT TIME
     if((dayofweek == input$dayofweek) & ((input$time == "Current Time")|(time.diff>=0 & time.diff<=10))){
       selected.station = unique_stations[unique_stations$name == input$location,]
@@ -260,11 +283,18 @@ server <- function(input, output, session){
         })"
     } else {
       #predict probability
-      observeEvent(input$load & !(station_info[station_info$name == input$location, "station_id"] %in% input_data[,1]), {
+      'observeEvent(input$load & !(station_info[station_info$name == input$location, "station_id"] %in% input_data[,1]), {
         if(input$load & !(station_info[station_info$name == input$location, "station_id"] %in% input_data[,1])){
           error=shinyalert("Oops!", "This station is not supported by our model. Please reload page and select another station.", type = "error")
         }
-      })
+      })'
+      
+      if(!(station_info[station_info$name == input$location, "station_id"] %in% input_data[,1])){
+        output$avgnum_bikes = renderText({
+          "This station is not supported by our model. Please select another station."
+        })
+        return("This station is not supported by our model. Please select another station.")
+      }
       
       selected.station = unique_stations_2[unique_stations_2$name == input$location,]
       stations.max.top5 = find_nearest_5(as.numeric(unique_stations[unique_stations$name == input$location, "station_id"]), distance.mat)
