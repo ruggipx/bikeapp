@@ -9,10 +9,13 @@ library(RColorBrewer)
 library(rsconnect)
 library(dplyr)
 library(plotly)
+library(xgboost)
+library(lubridate)
 
 source("real_time_data.R")
 source("k_means_clustering.R")
 unique_stations = read.csv("location_info.csv")
+unique_stations_2 = unique_stations[,names(unique_stations) != "X"]
 load("model_output.rdata")
 load("kmeans_models.rdata")
 source("nearby.R")
@@ -75,8 +78,7 @@ ui <- shinyUI(dashboardPage(
              actionButton("load", "GO", style='color: #FF5349; font-size:150%')),
       #Output for percent availability - increase font and center, change color by % availability
       column(4, 
-             box(textOutput("avgnum_bikes"),
-                 style='font-size:200%', width="200", height="200")
+             box(textOutput("avgnum_bikes"), style="font-size:24px", width="200", height="200")
       ),
       
       hr(),
@@ -147,6 +149,15 @@ server <- function(input, output, session){
   output$avgnum_bikes = renderText({
     paste0("There are approximately ",as.character(trunc(mean(merged$num_bikes_available))), " bikes available at each station.")
   })
+  'output$Color = renderText({
+    if(merged$num_bikes_available>3){
+      renderText({ paste("hello input is","<font color=\"#006400\"><b>") })
+    } else if (merged$num_bikes_available>0){
+      renderText({ paste("hello input is","<font color=\"#FFD700\"><b>") })
+    } else {
+      renderText({ paste("hello input is","<font color=\"#8B0000\"><b>") })
+    }
+   })'
   
   ##click "GO"
   observeEvent(input$load, {
@@ -219,18 +230,32 @@ server <- function(input, output, session){
             
           }
         })
+        
+        "output$Color = renderText({
+          if(selected.station$num_bikes_available>3){
+            as.character('fontsize: 200x; color:green')
+          } else if (selected.station$num_bikes_available>0){
+            as.character('fontsize: 200x; color:gold')
+          } else {
+            as.character('fontsize: 200x; color:red')
+          }
+        })"
     } else {
       #predict probability
-      selected.station = unique_stations[unique_stations$name == input$location,]
-      stations.max.top5 = merge(find_nearest_5(as.numeric(unique_stations[unique_stations$name == input$location, "station_id"]), distance.mat), merge_df)
+      selected.station = unique_stations_2[unique_stations_2$name == input$location,]
+      stations.max.top5 = find_nearest_5(as.numeric(unique_stations[unique_stations$name == input$location, "station_id"]), distance.mat)
       stations.max.top6 = rbind(selected.station, stations.max.top5)
+      if(input$time == "Current Time"){
+        hours = hour(Sys.time())
+        minutes= minute(Sys.time())
+      }
       
       if(input$dayofweek == "Saturday"){
         is_SAT = 1
         is_SUN = 0
         km.clusters = data.frame("station_id" = 1:length(km.obj.sat$cluster), "cluster" =  data.frame(km.obj.sat$cluster)$km.obj.sat.cluster)
-        #merged = merge(stations.max.top6, km.clusters)
-        #merged = merge(merged, cluster.df)
+        merged = merge(stations.max.top6, km.clusters)
+        merged = merge(merged, cluster.df)
         output$clusterplot <- renderPlot({
           gen_km_plot(gen_k_means_center(km.obj.sat, 5),12)
         })
@@ -238,8 +263,8 @@ server <- function(input, output, session){
         is_SAT = 0
         is_SUN = 1
         km.clusters = data.frame("station_id" = 1:length(km.obj.sun$cluster), "cluster" =  data.frame(km.obj.sun$cluster)$km.obj.sun.cluster)
-        #merged = merge(stations.max.top6, km.clusters)
-        #merged = merge(merged, cluster.df)
+        merged = merge(stations.max.top6, km.clusters)
+        merged = merge(merged, cluster.df)
         output$clusterplot <- renderPlot({
           gen_km_plot(gen_k_means_center(km.obj.sun, 5),12)
         })
@@ -247,22 +272,22 @@ server <- function(input, output, session){
         is_SAT = 0
         is_SUN = 0
         km.clusters = data.frame("station_id" = 1:length(km.obj.weekdays$cluster), "cluster" =  data.frame(km.obj.weekdays$cluster)$km.obj.weekdays.cluster)
-        #merged = merge(stations.max.top6, km.clusters)
-        #merged = merge(merged, cluster.df)
+        merged = merge(stations.max.top6, km.clusters)
+        merged = merge(merged, cluster.df)
         output$clusterplot <- renderPlot({
           gen_km_plot(gen_k_means_center(km.obj.weekdays, 5),12)
         })
       }
       
-      #xgbmodel=xgb.tab
-      predicted = predict(model, matrix("lat"=merged$lat, "lng"=merged$lon, "hour"=rep(hours, length(merged$cluster)),  "min"=rep(minutes, length(merged$cluster)), "is_SAT"=rep(is_SAT, length(merged$cluster)), "is_SUN"=rep(is_SUN, length(merged$cluster))))
+      predicted = predict(model, as.matrix(data.frame("lat"=merged$lat, "lng"=merged$lon, "hour"=rep(hours, length(merged$cluster)),  "min"=rep(minutes, length(merged$cluster)), "is_SAT"=rep(is_SAT, length(merged$cluster)), "is_SUN"=rep(is_SUN, length(merged$cluster)))))
+      merged = cbind(merged, predicted)
       
       output$map <- renderLeaflet({
         leaflet(data = merged) %>%
           addTiles() %>%  # Add default OpenStreetMap map tiles
           addCircleMarkers(lng = ~lon , 
                            lat=~lat, 
-                           popup=paste0(merged$name, ": ", as.character(merged$num_bikes_available), " bikes available"), 
+                           popup=paste0(merged$name, ": ", as.character(trunc(merged$predicted*100)), "% chance of finding an available bike"), 
                            radius = 20,
                            opacity = 1,
                            color = ~cluster_color
@@ -271,12 +296,22 @@ server <- function(input, output, session){
       
       output$avgnum_bikes = renderText({
         if(length(merged$cluster)>1){
-          paste0("There are ", as.character(selected.station$num_bikes_available), " bikes available at ", selected.station$name, " station")
+          paste0("There is a ", as.character(trunc(merged[merged$station_id == selected.station$station_id,]$predicted*100)), "% chance of finding an available bike at ", selected.station$name, " station")
         } else{
-          paste0("There are ", as.character(selected.station$num_bikes_available), " bikes available at ", selected.station$name, " station. There are no other bike stations nearby.")
+          paste0("There is a ", as.character(trunc(merged[merged$station_id == selected.station$station_id,]$predicted*100)), "% chance of finding an available bike at ", selected.station$name, " station. There are no other bike stations nearby.")
           
         }
       })
+      
+      "output$Color = renderText({
+        if(trunc(merged[merged$station_id == selected.station$station_id,]$predicted*100)>80){
+          as.character('fontsize: 200x; color:green')
+          } else if ((trunc(merged[merged$station_id == selected.station$station_id,]$predicted*100)>50)){
+            as.character('fontsize: 200x; color:gold')
+          } else {
+            as.character('fontsize: 200x; color:red')
+        }
+      })"
     }
   })
 }
