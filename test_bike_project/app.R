@@ -11,6 +11,7 @@ library(dplyr)
 library(plotly)
 library(xgboost)
 library(lubridate)
+library(shinyalert)
 
 source("real_time_data.R")
 source("k_means_clustering.R")
@@ -71,10 +72,11 @@ ui <- shinyUI(dashboardPage(
                           choices=c("Weekday", "Saturday", "Sunday"))
       ),
       
+      useShinyalert(),
       #Input for real time or future data
       #Load button-used to trigger response
       column(3, 
-             textInput("time", "Time(24 Hours in format 'XX:XX'):", value = "Current Time"),
+             textInput("time", "Time(24 Hour Time in format 'XX:XX'):", value = "Current Time"),
              actionButton("load", "GO", style='color: #FF5349; font-size:150%')),
       #Output for percent availability - increase font and center, change color by % availability
       column(4, 
@@ -143,7 +145,10 @@ server <- function(input, output, session){
                        radius = 4,
                        opacity = .7,
                        color = ~cluster_color
-      )
+      ) %>% 
+      addLegend("bottomright", colors = brewer.pal(5, "Dark2"), labels=1:5,
+                title = "Station Group",
+                opacity = 1)
   })
   
   output$avgnum_bikes = renderText({
@@ -166,6 +171,13 @@ server <- function(input, output, session){
     if(dayofweek != "Saturday" & dayofweek != "Sunday"){
       dayofweek="Weekday"
     }
+    
+    observeEvent(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5))&(input$time != "Current Time"))) {
+      if(is.na(as.numeric(substr(input$time, 1, 2)))|is.na(as.numeric(substr(input$time, 4, 5)))&(input$time != "Current Time")){
+        error=shinyalert("Oops!", "Please input a valid time.", type = "error")
+      }
+    })
+    
     if(input$time != "Current Time"){
       hours = as.numeric(substr(input$time, 1, 2))
       minutes =  as.numeric(substr(input$time, 4, 5))
@@ -219,7 +231,10 @@ server <- function(input, output, session){
                              radius = 20,
                              opacity = 1,
                              color = ~cluster_color
-            )
+            ) %>% 
+            addLegend("bottomright", colors = brewer.pal(5, "Dark2"), labels=1:5,
+                      title = "Station Group",
+                      opacity = 1)
         })
       
         output$avgnum_bikes = renderText({
@@ -291,7 +306,10 @@ server <- function(input, output, session){
                            radius = 20,
                            opacity = 1,
                            color = ~cluster_color
-          )
+          ) %>% 
+          addLegend("bottomright", colors = brewer.pal(5, "Dark2"), labels=1:5,
+                    title = "Station Group",
+                    opacity = 1)
       })
       
       output$avgnum_bikes = renderText({
